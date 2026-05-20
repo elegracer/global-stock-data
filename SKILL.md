@@ -1,6 +1,6 @@
 ---
 name: global-stock-data
-description: 美股港股全栈数据工具包 — 覆盖行情(新浪+腾讯+东财push2)、K线(新浪+Yahoo)、基本面(东财datacenter三表+GMAININDICATOR+Yahoo quoteSummary+SEC XBRL)、资金面(东财push2his日级资金流)、期权(Yahoo)、SEC Filing(EDGAR)、搜索与工具(东财search+Yahoo+SEC CIK+全市场列表)七层数据源，内嵌全部调用代码，自包含零依赖外部文件。适用于美股港股个股分析、全市场筛选、财报解读、期权策略、SEC文件检索、资金流追踪、机构持仓分析等场景。
+description: 美股港股全栈数据工具包 — 覆盖行情(新浪+腾讯+东财push2)、K线(新浪+Yahoo)、技术指标(MA/MACD/RSI/KDJ/布林带)、基本面(东财datacenter三表+GMAININDICATOR+Yahoo quoteSummary+SEC XBRL)、资金面(东财push2his日级资金流)、期权(Yahoo)、SEC Filing(EDGAR)、搜索与工具(东财search+Yahoo+SEC CIK+全市场列表)八层数据源，内嵌全部调用代码，自包含零依赖外部文件。适用于美股港股个股分析、全市场筛选、财报解读、期权策略、SEC文件检索、资金流追踪、机构持仓分析等场景。
 origin: custom
 version: 1.0
 ---
@@ -11,7 +11,7 @@ version: 1.0
 
 # 美股港股全栈数据工具包 V1.0
 
-七层数据架构，17 个端点，5 个数据源，全部零鉴权，实测可用（2026-05-20 验证）。
+八层数据架构，18 个端点，5 个数据源，全部零鉴权，实测可用（2026-05-20 验证）。
 
 **使用方式：** 将本文件放入 `~/.claude/skills/global-stock-data/SKILL.md`，Claude Code 会自动识别并在美股/港股相关对话中激活。
 
@@ -24,6 +24,9 @@ version: 1.0
 K线层（日/周/月/分钟）
 ├── 新浪          → 美股日K (回溯至1984年)
 └── Yahoo chart   → 美股+港股 (v8 API, 零crumb)
+
+技术指标层（纯计算，零额外依赖）
+└── MA/EMA + MACD + RSI + KDJ + 布林带    基于K线OHLCV，纯Python计算
 
 基本面层
 ├── 东财 datacenter → 美股/港股三表(资产负债+利润+现金流) + GMAININDICATOR(关键指标)
@@ -64,7 +67,9 @@ SEC Filing层（仅美股）
 - 用户要看**全市场涨跌幅排名**（当日涨幅/跌幅最大的股票）
 - 用户要做**全市场筛选**（遍历美股/港股列表做初筛）
 - 用户要看**关键财务指标概览**（营收/净利/EPS/ROE/ROA/资产负债率 中文版）
-- 关键词：美股、港股、AAPL、苹果、腾讯、00700、TSLA、特斯拉、BABA、阿里巴巴、行情、K线、财报、PE、PB、ROE、分析师、目标价、期权、call、put、SEC、10-K、年报、季报、资金流、主力、机构持仓、新闻、涨幅排名、全市场、筛选、关键指标
+- 用户要看**技术指标**（MACD/RSI/KDJ/布林带/均线）
+- 用户要判断**金叉死叉/超买超卖/变盘信号**
+- 关键词：美股、港股、AAPL、苹果、腾讯、00700、TSLA、特斯拉、BABA、阿里巴巴、行情、K线、财报、PE、PB、ROE、分析师、目标价、期权、call、put、SEC、10-K、年报、季报、资金流、主力、机构持仓、新闻、涨幅排名、全市场、筛选、关键指标、MACD、RSI、KDJ、布林带、均线、金叉、死叉、超买、超卖、技术分析
 
 ---
 
@@ -480,9 +485,225 @@ def stock_kline_yahoo(symbol: str, interval: str = "1d",
 
 ---
 
-## Layer 3: 基本面层
+## Layer 3: 技术指标层
 
-### 3.1 财报三表 — 东财 datacenter
+基于 K 线 OHLCV 数据的纯 Python 技术指标计算，零额外依赖。
+
+**使用方式：** 先调 K 线函数获取数据，再传入技术指标函数：
+```python
+klines = us_stock_kline_sina("AAPL", 120)
+macd = calc_macd(klines)
+rsi = calc_rsi(klines)
+```
+
+### 3.1 移动平均线 MA / EMA
+
+```python
+def _ema(values: list[float], period: int) -> list[float]:
+    """EMA 指数移动平均（内部辅助）"""
+    result = [values[0]]
+    k = 2 / (period + 1)
+    for v in values[1:]:
+        result.append(v * k + result[-1] * (1 - k))
+    return result
+
+
+def calc_ma(klines: list[dict], periods: list[int] = None) -> list[dict]:
+    """
+    移动平均线 MA + EMA
+    klines: K线数据 [{date, open, high, low, close, volume}, ...]
+    periods: 周期列表，默认 [5, 10, 20, 60]
+    返回: [{date, close, ma5, ma10, ma20, ma60, ema12, ema26}, ...]
+    """
+    if periods is None:
+        periods = [5, 10, 20, 60]
+    closes = [k["close"] for k in klines]
+    
+    # EMA 12/26（MACD 常用）
+    ema12 = _ema(closes, 12)
+    ema26 = _ema(closes, 26)
+    
+    result = []
+    for i, k in enumerate(klines):
+        row = {"date": k["date"], "close": k["close"]}
+        for p in periods:
+            if i >= p - 1:
+                row[f"ma{p}"] = round(sum(closes[i - p + 1:i + 1]) / p, 4)
+            else:
+                row[f"ma{p}"] = None
+        row["ema12"] = round(ema12[i], 4)
+        row["ema26"] = round(ema26[i], 4)
+        result.append(row)
+    return result
+```
+
+### 3.2 MACD
+
+```python
+def calc_macd(klines: list[dict], fast: int = 12, slow: int = 26,
+              signal: int = 9) -> list[dict]:
+    """
+    MACD (Moving Average Convergence Divergence)
+    klines: K线数据
+    fast/slow/signal: 快线/慢线/信号线周期（默认 12/26/9）
+    返回: [{date, close, dif, dea, macd_hist}, ...]
+    
+    dif = EMA(fast) - EMA(slow)        金叉/死叉看 dif 穿越 dea
+    dea = EMA(signal) of dif           信号线
+    macd_hist = (dif - dea) * 2        柱状图（红涨绿跌）
+    """
+    closes = [k["close"] for k in klines]
+    ema_fast = _ema(closes, fast)
+    ema_slow = _ema(closes, slow)
+    
+    dif = [round(f - s, 4) for f, s in zip(ema_fast, ema_slow)]
+    dea = _ema(dif, signal)
+    
+    result = []
+    for i, k in enumerate(klines):
+        result.append({
+            "date": k["date"],
+            "close": k["close"],
+            "dif": round(dif[i], 4),
+            "dea": round(dea[i], 4),
+            "macd_hist": round((dif[i] - dea[i]) * 2, 4),
+        })
+    return result
+```
+
+### 3.3 RSI
+
+```python
+def calc_rsi(klines: list[dict],
+             periods: list[int] = None) -> list[dict]:
+    """
+    RSI (Relative Strength Index)
+    klines: K线数据
+    periods: 周期列表（默认 [6, 12, 24]）
+    返回: [{date, close, rsi6, rsi12, rsi24}, ...]
+    
+    RSI > 70 超买区（可能回调）
+    RSI < 30 超卖区（可能反弹）
+    """
+    if periods is None:
+        periods = [6, 12, 24]
+    closes = [k["close"] for k in klines]
+    
+    # 涨跌额序列
+    changes = [0.0] + [closes[i] - closes[i - 1] for i in range(1, len(closes))]
+    gains = [max(c, 0) for c in changes]
+    losses = [max(-c, 0) for c in changes]
+    
+    result = []
+    for i, k in enumerate(klines):
+        row = {"date": k["date"], "close": k["close"]}
+        for p in periods:
+            if i < p:
+                row[f"rsi{p}"] = None
+                continue
+            avg_gain = sum(gains[i - p + 1:i + 1]) / p
+            avg_loss = sum(losses[i - p + 1:i + 1]) / p
+            if avg_loss == 0:
+                row[f"rsi{p}"] = 100.0
+            else:
+                rs = avg_gain / avg_loss
+                row[f"rsi{p}"] = round(100 - 100 / (1 + rs), 2)
+        result.append(row)
+    return result
+```
+
+### 3.4 KDJ
+
+```python
+def calc_kdj(klines: list[dict], n: int = 9,
+             m1: int = 3, m2: int = 3) -> list[dict]:
+    """
+    KDJ 随机指标
+    klines: K线数据
+    n: RSV 周期（默认9）
+    m1/m2: K/D 平滑系数（默认3/3）
+    返回: [{date, close, k, d, j}, ...]
+    
+    K/D > 80 超买，K/D < 20 超卖
+    J > 100 或 J < 0 为极端信号
+    金叉: K 上穿 D；死叉: K 下穿 D
+    """
+    k_val, d_val = 50.0, 50.0
+    result = []
+    
+    for i, kline in enumerate(klines):
+        if i < n - 1:
+            result.append({"date": kline["date"], "close": kline["close"],
+                           "k": None, "d": None, "j": None})
+            continue
+        
+        window = klines[i - n + 1:i + 1]
+        high_n = max(w["high"] for w in window)
+        low_n = min(w["low"] for w in window)
+        
+        rsv = (kline["close"] - low_n) / (high_n - low_n) * 100 if high_n != low_n else 50.0
+        k_val = (1 / m1) * rsv + (1 - 1 / m1) * k_val
+        d_val = (1 / m2) * k_val + (1 - 1 / m2) * d_val
+        j_val = 3 * k_val - 2 * d_val
+        
+        result.append({
+            "date": kline["date"],
+            "close": kline["close"],
+            "k": round(k_val, 2),
+            "d": round(d_val, 2),
+            "j": round(j_val, 2),
+        })
+    return result
+```
+
+### 3.5 布林带
+
+```python
+def calc_boll(klines: list[dict], period: int = 20,
+              num_std: float = 2.0) -> list[dict]:
+    """
+    布林带 (Bollinger Bands)
+    klines: K线数据
+    period: 中轨 MA 周期（默认20）
+    num_std: 标准差倍数（默认2）
+    返回: [{date, close, upper, middle, lower, bandwidth}, ...]
+    
+    价格触及 upper → 可能超买
+    价格触及 lower → 可能超卖
+    bandwidth 收窄 → 即将变盘
+    """
+    closes = [k["close"] for k in klines]
+    result = []
+    
+    for i, k in enumerate(klines):
+        if i < period - 1:
+            result.append({"date": k["date"], "close": k["close"],
+                           "upper": None, "middle": None, "lower": None,
+                           "bandwidth": None})
+            continue
+        
+        window = closes[i - period + 1:i + 1]
+        ma = sum(window) / period
+        std = (sum((x - ma) ** 2 for x in window) / period) ** 0.5
+        upper = ma + num_std * std
+        lower = ma - num_std * std
+        
+        result.append({
+            "date": k["date"],
+            "close": k["close"],
+            "upper": round(upper, 4),
+            "middle": round(ma, 4),
+            "lower": round(lower, 4),
+            "bandwidth": round((upper - lower) / ma * 100, 2) if ma else None,
+        })
+    return result
+```
+
+---
+
+## Layer 4: 基本面层
+
+### 4.1 财报三表 — 东财 datacenter
 
 东财 datacenter 提供美股/港股的资产负债表、利润表、现金流量表，中文字段名，按科目行展开。
 
@@ -523,7 +744,7 @@ def financial_statements_eastmoney(secucode: str, statement: str = "balance",
     # CURRENCY (如 "美元"/"人民币")
 ```
 
-### 3.2 关键财务指标(中文) — 东财 GMAININDICATOR
+### 4.2 关键财务指标(中文) — 东财 GMAININDICATOR
 
 东财 datacenter 的 GMAININDICATOR 报表，提供中文关键财务指标概览。美股 49 字段、港股 75 字段，包含 ROE/ROA/EPS/毛利率/资产负债率/流动比率等，按季度报告。
 
@@ -556,7 +777,7 @@ def key_indicators_eastmoney(secucode: str, page_size: int = 4) -> list[dict]:
     )
 ```
 
-### 3.3 关键财务指标(英文) — Yahoo quoteSummary
+### 4.3 关键财务指标(英文) — Yahoo quoteSummary
 
 Yahoo quoteSummary 的 `financialData` + `defaultKeyStatistics` 模块提供最核心的估值指标。
 
@@ -621,7 +842,7 @@ def key_statistics(symbol: str) -> dict:
     }
 ```
 
-### 3.4 分析师预期与评级 — Yahoo quoteSummary
+### 4.4 分析师预期与评级 — Yahoo quoteSummary
 
 ```python
 def analyst_estimates(symbol: str) -> dict:
@@ -680,7 +901,7 @@ def analyst_estimates(symbol: str) -> dict:
     }
 ```
 
-### 3.5 机构持仓 — Yahoo quoteSummary
+### 4.5 机构持仓 — Yahoo quoteSummary
 
 ```python
 def institutional_holders(symbol: str) -> dict:
@@ -718,7 +939,7 @@ def institutional_holders(symbol: str) -> dict:
     return {"overview": overview, "top_holders": top_holders}
 ```
 
-### 3.6 年度/季度财报明细 — Yahoo quoteSummary
+### 4.6 年度/季度财报明细 — Yahoo quoteSummary
 
 东财 datacenter 按科目行展开，Yahoo 直接返回完整报表结构，两个互补。
 
@@ -765,9 +986,9 @@ def financial_statements_yahoo(symbol: str,
 
 ---
 
-## Layer 4: 资金面层
+## Layer 5: 资金面层
 
-### 4.1 日级资金流 — 东财 push2his
+### 5.1 日级资金流 — 东财 push2his
 
 ```python
 def fund_flow_daily(ticker_or_code: str, secid_prefix: int = 105,
@@ -811,9 +1032,9 @@ def fund_flow_daily(ticker_or_code: str, secid_prefix: int = 105,
 
 ---
 
-## Layer 5: 期权层
+## Layer 6: 期权层
 
-### 5.1 期权链 — Yahoo Finance
+### 6.1 期权链 — Yahoo Finance
 
 ```python
 def options_chain(symbol: str, expiration: int = None) -> dict:
@@ -868,9 +1089,9 @@ def options_chain(symbol: str, expiration: int = None) -> dict:
 
 ---
 
-## Layer 6: SEC Filing 层（仅美股）
+## Layer 7: SEC Filing 层（仅美股）
 
-### 6.1 SEC Filing 列表 — EDGAR submissions
+### 7.1 SEC Filing 列表 — EDGAR submissions
 
 ```python
 SEC_HEADERS = {"User-Agent": "SimonLin global-stock-data/1.0 (contact@example.com)"}
@@ -917,7 +1138,7 @@ def sec_filings(cik: str, form_type: str = None) -> dict:
     }
 ```
 
-### 6.2 SEC XBRL 结构化财务数据 — EDGAR companyfacts
+### 7.2 SEC XBRL 结构化财务数据 — EDGAR companyfacts
 
 覆盖 503 个 GAAP 指标，可精确提取多年营收/净利/EPS/资产/负债等。
 
@@ -1003,9 +1224,9 @@ def sec_xbrl_facts(cik: str, metrics: list[str] = None) -> dict:
 
 ---
 
-## Layer 7: 工具层
+## Layer 8: 工具层
 
-### 7.1 股票搜索 — 东财 search API
+### 8.1 股票搜索 — 东财 search API
 
 ```python
 def stock_search(keyword: str, count: int = 10) -> list[dict]:
@@ -1046,7 +1267,7 @@ def stock_search(keyword: str, count: int = 10) -> list[dict]:
     return result
 ```
 
-### 7.2 股票新闻 — Yahoo Finance search
+### 8.2 股票新闻 — Yahoo Finance search
 
 ```python
 def stock_news(keyword: str, count: int = 10) -> list[dict]:
@@ -1078,7 +1299,7 @@ def stock_news(keyword: str, count: int = 10) -> list[dict]:
     return result
 ```
 
-### 7.3 Ticker → CIK 映射 — SEC EDGAR（仅美股）
+### 8.3 Ticker → CIK 映射 — SEC EDGAR（仅美股）
 
 ```python
 _cik_cache = None
@@ -1110,7 +1331,7 @@ def ticker_to_cik(ticker: str) -> dict:
     return {}
 ```
 
-### 7.4 全市场股票列表 — 东财 push2
+### 8.4 全市场股票列表 — 东财 push2
 
 ```python
 def market_stock_list(market: str = "us_nasdaq", sort_field: str = "f3",
