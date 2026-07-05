@@ -253,19 +253,19 @@ def us_stock_quote_tencent(ticker: str) -> dict:
     
     return {
         "name": fields[1],           # 中文名
-        "name_en": fields[27],       # 英文名
+        "name_en": fields[46],       # 英文名
         "price": float(fields[3]) if fields[3] else 0,
         "prev_close": float(fields[4]) if fields[4] else 0,
         "open": float(fields[5]) if fields[5] else 0,
-        "volume": int(fields[6]) if fields[6] else 0,
+        "volume": int(float(fields[6])) if fields[6] else 0,  # 成交量
         "high": float(fields[33]) if fields[33] else 0,
         "low": float(fields[34]) if fields[34] else 0,
-        "high_52w": float(fields[35]) if fields[35] else 0,
-        "low_52w": float(fields[36]) if fields[36] else 0,
+        "high_52w": float(fields[48]) if fields[48] else 0,
+        "low_52w": float(fields[49]) if fields[49] else 0,
         "change_pct": float(fields[32]) if fields[32] else 0,
         "market_cap": float(fields[44]) if fields[44] else 0,  # 亿美元
-        "pe": float(fields[53]) if fields[53] else 0,
-        "pb": float(fields[56]) if fields[56] else 0,
+        "pe": float(fields[39]) if fields[39] else 0,
+        "pb": float(fields[51]) if fields[51] else 0,
         "timestamp": fields[30],
     }
 ```
@@ -299,13 +299,13 @@ def hk_stock_quote_tencent(code: str) -> dict:
         "open": float(fields[5]) if fields[5] else 0,
         "high": float(fields[33]) if fields[33] else 0,
         "low": float(fields[34]) if fields[34] else 0,
-        "volume": int(fields[6]) if fields[6] else 0,    # 成交量(股)
+        "volume": int(float(fields[6])) if fields[6] else 0,  # 成交量(股)
         "amount": float(fields[37]) if fields[37] else 0,  # 成交额
         "change_pct": float(fields[32]) if fields[32] else 0,
         "pe": float(fields[39]) if fields[39] else 0,
         "pb": float(fields[56]) if fields[56] else 0,
-        "high_52w": float(fields[35]) if fields[35] else 0,
-        "low_52w": float(fields[36]) if fields[36] else 0,
+        "high_52w": float(fields[48]) if fields[48] else 0,
+        "low_52w": float(fields[49]) if fields[49] else 0,
         "market_cap": float(fields[44]) if fields[44] else 0,  # 亿港元
         "timestamp": fields[30],
     }
